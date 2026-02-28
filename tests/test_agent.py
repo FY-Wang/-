@@ -10,7 +10,9 @@ from agent import (
     ParsedFrame,
     ParsedTile,
     Tile,
+    WindowInfo,
     run_episode,
+    select_window_by_title,
 )
 
 
@@ -123,3 +125,19 @@ def test_yolo_parser_pipeline_with_dummy_detector():
     frame = parser.capture_and_parse()
     assert len(frame.tiles) == 2
     assert 1 in frame.covers.get(0, set())
+
+
+def test_select_window_by_title_matches_keyword():
+    windows = [
+        WindowInfo(hwnd=101, title="记事本"),
+        WindowInfo(hwnd=202, title="羊了个羊 - 微信小游戏"),
+    ]
+    matched = select_window_by_title(windows, ["羊了个羊"])
+    assert matched is not None
+    assert matched.hwnd == 202
+
+
+def test_select_window_by_title_returns_none_when_missing():
+    windows = [WindowInfo(hwnd=101, title="记事本")]
+    matched = select_window_by_title(windows, ["羊了个羊"])
+    assert matched is None

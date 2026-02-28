@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 import json
-import math
 import random
 import subprocess
-import time
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Protocol, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple
 
 Position = Tuple[int, int]
-BBox = Tuple[int, int, int, int]  # x1, y1, x2, y2
+BBox = Tuple[int, int, int, int]
 
 
 @dataclass(frozen=True)
@@ -130,8 +128,6 @@ class GreedyAgent:
 
 
 class BeamSearchAgent:
-    """Lookahead strategy mounted on top of greedy scoring."""
-
     def __init__(self, base_agent: Optional[GreedyAgent] = None, depth: int = 3, beam_width: int = 4):
         self.base_agent = base_agent or GreedyAgent()
         self.depth = depth
@@ -144,7 +140,6 @@ class BeamSearchAgent:
 
         best_first_action: Optional[int] = None
         best_value = -float("inf")
-
         for first in visible:
             rollout = state.clone()
             rollout.pick(first.id)
@@ -152,7 +147,6 @@ class BeamSearchAgent:
             if value > best_value:
                 best_value = value
                 best_first_action = first.id
-
         return best_first_action
 
     def _search(self, state: GameState, depth_left: int) -> float:
@@ -181,8 +175,6 @@ class BeamSearchAgent:
 
 
 class MCTSAgent:
-    """Lightweight Monte-Carlo rollout policy for lookahead."""
-
     def __init__(self, playouts_per_action: int = 20, max_rollout_steps: int = 64):
         self.playouts_per_action = playouts_per_action
         self.max_rollout_steps = max_rollout_steps
@@ -193,7 +185,7 @@ class MCTSAgent:
         if not visible:
             return None
 
-        best_action = None
+        best_action: Optional[int] = None
         best_score = -float("inf")
         for action in visible:
             total = 0.0
@@ -276,8 +268,6 @@ class CoverInferer(Protocol):
 
 
 class GeometricCoverInferer:
-    """Infer cover relations by bbox overlap and layer hint."""
-
     def __init__(self, overlap_threshold: float = 0.15):
         self.overlap_threshold = overlap_threshold
 
@@ -308,13 +298,9 @@ class GeometricCoverInferer:
 
 
 class OpenCVYOLODetector:
-    """YOLO detector adapter (ultralytics)."""
-
     def __init__(self, model_path: str):
-        try:
-            from ultralytics import YOLO  # type: ignore
-        except ImportError as exc:
-            raise RuntimeError("ultralytics is required for OpenCVYOLODetector") from exc
+        from ultralytics import YOLO  # type: ignore
+
         self._model = YOLO(model_path)
 
     def detect(self, frame: Any) -> List[Detection]:
@@ -330,16 +316,48 @@ class OpenCVYOLODetector:
         return detections
 
 
-class MSSScreenSource:
-    """Desktop capture via mss (works with window region too)."""
+@dataclass(frozen=True)
+class WindowInfo:
+    hwnd: int
+    title: str
 
+
+def select_window_by_title(windows: Sequence[WindowInfo], keywords: Sequence[str]) -> Optional[WindowInfo]:
+    normalized_keywords = [k.lower() for k in keywords if k]
+    if not normalized_keywords:
+        return None
+    for info in windows:
+        title = info.title.lower()
+        if any(k in title for k in normalized_keywords):
+            return info
+    return None
+
+
+def find_window_by_title_keywords(keywords: Sequence[str]) -> Optional[WindowInfo]:
+    import win32gui  # type: ignore
+
+    windows: List[WindowInfo] = []
+
+    def callback(hwnd: int, _ctx: Any) -> None:
+        if not win32gui.IsWindowVisible(hwnd):
+            return
+        title = win32gui.GetWindowText(hwnd)
+        if not title:
+            return
+        windows.append(WindowInfo(hwnd=hwnd, title=title))
+
+    win32gui.EnumWindows(callback, None)
+    return select_window_by_title(windows, keywords)
+
+
+class MSSScreenSource:
     def __init__(self, monitor: int = 1, region: Optional[Dict[str, int]] = None):
         self.monitor = monitor
         self.region = region
 
     def capture(self) -> Any:
-        import numpy as np  # type: ignore
         import mss  # type: ignore
+        import numpy as np  # type: ignore
 
         with mss.mss() as sct:
             target = self.region or sct.monitors[self.monitor]
@@ -348,8 +366,6 @@ class MSSScreenSource:
 
 
 class Win32WindowSource:
-    """Capture a specific window handle on Windows."""
-
     def __init__(self, hwnd: int):
         self.hwnd = hwnd
 
@@ -365,9 +381,20 @@ class Win32WindowSource:
             return np.array(shot)[:, :, :3]
 
 
-class AdbSource:
-    """Capture Android screen via `adb exec-out screencap -p`."""
+class AutoWin32WindowSource:
+    """Automatically locate a visible window by title keywords and capture it."""
 
+    def __init__(self, keywords: Optional[Sequence[str]] = None):
+        self.keywords = list(keywords or ["羊了个羊"])
+
+    def capture(self) -> Any:
+        matched = find_window_by_title_keywords(self.keywords)
+        if matched is None:
+            raise RuntimeError(f"No visible window matched keywords: {self.keywords}")
+        return Win32WindowSource(matched.hwnd).capture()
+
+
+class AdbSource:
     def __init__(self, adb_path: str = "adb", serial: Optional[str] = None):
         self.adb_path = adb_path
         self.serial = serial

@@ -7,6 +7,7 @@ from agent import (
     AdbClicker,
     AdbSource,
     AutoPlayer,
+    AutoWin32WindowSource,
     BeamSearchAgent,
     GreedyAgent,
     MCTSAgent,
@@ -34,8 +35,9 @@ def main() -> None:
     parser.add_argument("--strategy", choices=["greedy", "beam", "mcts"], default="beam")
     parser.add_argument("--mode", choices=["demo", "live"], default="demo")
     parser.add_argument("--frame-json", default="sample_frame.json", help="demo 模式使用的 ParsedFrame json")
-    parser.add_argument("--source", choices=["screen", "window", "adb"], default="screen")
+    parser.add_argument("--source", choices=["screen", "window", "window-auto", "adb"], default="window-auto")
     parser.add_argument("--window-hwnd", type=int, default=0)
+    parser.add_argument("--window-keywords", default="羊了个羊", help="窗口自动识别关键词，多个用逗号分隔")
     parser.add_argument("--weights", default="yolo_tiles.pt")
     parser.add_argument("--adb-serial", default=None)
     parser.add_argument("--interval", type=float, default=0.2)
@@ -74,6 +76,10 @@ def main() -> None:
         if not args.window_hwnd:
             raise ValueError("--window-hwnd is required when --source window")
         source = Win32WindowSource(args.window_hwnd)
+        clicker = PyAutoGuiClicker()
+    elif args.source == "window-auto":
+        keywords = [k.strip() for k in args.window_keywords.split(",") if k.strip()]
+        source = AutoWin32WindowSource(keywords=keywords)
         clicker = PyAutoGuiClicker()
     else:
         source = AdbSource(serial=args.adb_serial)
