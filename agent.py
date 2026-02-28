@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
-from collections import Counter, defaultdict
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Callable, Dict, List, Optional, Protocol, Set, Tuple
 
 Position = Tuple[int, int]
 
@@ -70,7 +70,6 @@ class GameState:
         matches = [index for index, tile in enumerate(self.shelf) if tile.type == tile_type]
         if len(matches) < 3:
             return
-        # Remove exactly three of the type to mimic a 3-match clear.
         to_remove = set(matches[:3])
         self.shelf = [tile for index, tile in enumerate(self.shelf) if index not in to_remove]
 
@@ -104,16 +103,14 @@ class GreedyAgent:
             immediate_match_bonus = 100.0 if count == 2 else 0.0
             pair_bonus = 10.0 if count == 1 else 0.0
             unlock_bonus = self._unlocking_score(state, tile.id)
-            capacity_risk_penalty = 5.0 if len(state.shelf) >= state.shelf_capacity - 1 and count == 0 else 0.0
+            risk_penalty = 5.0 if len(state.shelf) >= state.shelf_capacity - 1 and count == 0 else 0.0
             extra = self.extra_score_fn(state, tile) if self.extra_score_fn else 0.0
-            return immediate_match_bonus + pair_bonus + unlock_bonus + extra - capacity_risk_penalty
+            return immediate_match_bonus + pair_bonus + unlock_bonus + extra - risk_penalty
 
-        chosen = max(visible, key=score)
-        return chosen.id
+        return max(visible, key=score).id
 
     @staticmethod
     def _unlocking_score(state: GameState, chosen_tile_id: int) -> float:
-        """Estimate how many lower tiles become newly visible if chosen tile is removed."""
         unlocked = 0
         for lower_id in state.covers.get(chosen_tile_id, set()):
             if lower_id in state.removed:
@@ -124,8 +121,93 @@ class GreedyAgent:
         return float(unlocked)
 
 
+@dataclass(frozen=True)
+class ParsedTile:
+    """Tile data parsed from a screenshot frame."""
+
+    id: int
+    type: str
+    layer: int
+    position: Position
+    clickable: bool = True
+
+
+@dataclass
+class ParsedFrame:
+    """Output of vision parsing from one screenshot/window capture."""
+
+    tiles: List[ParsedTile]
+    covers: Dict[int, Set[int]]
+
+
+class VisionParser(Protocol):
+    """Pluggable interface for screenshot/window parsing."""
+
+    def capture_and_parse(self) -> ParsedFrame:
+        ...
+
+
+class ClickController(Protocol):
+    """Pluggable click executor (pyautogui/adb/win32/etc.)."""
+
+    def click(self, position: Position) -> None:
+        ...
+
+
+class AutoPlayer:
+    """
+    Integrates vision parsing + strategy + click execution.
+
+    Workflow:
+    1. Capture current game window and parse tiles/covers.
+    2. Build GameState from parsed visible board.
+    3. Ask strategy which tile to pick.
+    4. Click its screen position.
+    """
+
+    def __init__(self, parser: VisionParser, clicker: ClickController, agent: Optional[GreedyAgent] = None):
+        self.parser = parser
+        self.clicker = clicker
+        self.agent = agent or GreedyAgent()
+
+    def step(self, shelf: Optional[List[Tile]] = None, removed: Optional[Set[int]] = None) -> Optional[int]:
+        frame = self.parser.capture_and_parse()
+        state = self._state_from_frame(frame, shelf=shelf, removed=removed)
+        choice = self.agent.choose(state)
+        if choice is None:
+            return None
+        chosen_tile = state.tiles[choice]
+        self.clicker.click(chosen_tile.position)
+        return choice
+
+    @staticmethod
+    def _state_from_frame(frame: ParsedFrame, shelf: Optional[List[Tile]] = None, removed: Optional[Set[int]] = None) -> GameState:
+        tiles = {
+            tile.id: Tile(
+                id=tile.id,
+                type=tile.type,
+                layer=tile.layer,
+                position=tile.position,
+            )
+            for tile in frame.tiles
+            if tile.clickable
+        }
+
+        covers: Dict[int, Set[int]] = {tile_id: set() for tile_id in tiles}
+        for upper, lowers in frame.covers.items():
+            if upper not in tiles:
+                continue
+            covers[upper] = {lower for lower in lowers if lower in tiles}
+
+        return GameState(
+            tiles=tiles,
+            covers=covers,
+            shelf=list(shelf or []),
+            removed=set(removed or set()),
+        )
+
+
 def run_episode(state: GameState, agent: GreedyAgent, max_steps: int = 10_000) -> str:
-    """Run until win/loss/stuck. Returns one of: 'win', 'loss', 'stuck'."""
     for _ in range(max_steps):
         if state.won:
             return "win"
