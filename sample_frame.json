@@ -1,0 +1,12 @@
+{
+  "tiles": [
+    {"id": 1, "type": "carrot", "layer": 2, "position": [320, 320], "bbox": [280, 280, 360, 360], "clickable": true},
+    {"id": 2, "type": "carrot", "layer": 1, "position": [320, 390], "bbox": [280, 350, 360, 430], "clickable": true},
+    {"id": 3, "type": "carrot", "layer": 0, "position": [320, 460], "bbox": [280, 420, 360, 500], "clickable": true}
+  ],
+  "covers": {
+    "1": [2],
+    "2": [3],
+    "3": []
+  }
+}

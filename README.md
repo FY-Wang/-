@@ -1,69 +1,83 @@
-# Triple-Match Stack Agent + Vision Autoplay Skeleton
+# 羊了个羊：星球 自动通关 Agent（YOLO/OpenCV + 窗口抓图 + Lookahead）
 
-这个仓库提供了一个可扩展的《羊了个羊：星球》自动通关脚手架：
+本项目提供可直接扩展到实机的自动化框架：
 
-1. 规则状态建模（堆叠、遮挡、7槽、三连自动消除）
-2. 策略决策（Greedy）
-3. 视觉解析 + 自动点击执行接口（截图/窗口捕捉联动）
+- **VisionParser 接 YOLO/OpenCV 输出**
+- **窗口句柄 / ADB 抓图**
+- **Greedy + Beam Search + MCTS lookahead**
+- **一键运行入口 `main.py`**
 
-## 核心模块
+## 1. 代码结构
 
-- `Tile` / `GameState`
-  - 维护 tiles、covers、可见性判定、shelf 与自动三消
-- `GreedyAgent`
-  - 优先立即三消
-  - 其次补对子
-  - 再考虑解锁下层牌
-- `ParsedFrame` / `VisionParser` / `ClickController` / `AutoPlayer`
-  - `VisionParser`: 负责“捕捉窗口 + 解析 tiles/covers”
-  - `ClickController`: 负责点击屏幕坐标
-  - `AutoPlayer.step()`: 每步自动“截图解析 -> 策略选牌 -> 执行点击”
+- `agent.py`
+  - 规则状态：`Tile`、`GameState`
+  - 策略：`GreedyAgent`、`BeamSearchAgent`、`MCTSAgent`
+  - 视觉：`Detection`、`OpenCVYOLODetector`、`OpenCVYOLOVisionParser`
+  - 抓图源：`MSSScreenSource`、`Win32WindowSource`、`AdbSource`
+  - 点击器：`PyAutoGuiClicker`、`AdbClicker`
+  - 联动器：`AutoPlayer`
+- `main.py`
+  - 一键启动（demo/live）
+- `sample_frame.json`
+  - demo 模式示例输入
 
-## Quick Start (策略模拟)
+## 2. 安装依赖（按需）
 
-```python
-from agent import Tile, GameState, GreedyAgent, run_episode
+最小测试运行（仅单元测试）不需要 YOLO/GUI 依赖。
 
-tiles = {
-    1: Tile(1, "carrot", 2, (0, 0)),
-    2: Tile(2, "carrot", 1, (0, 0)),
-    3: Tile(3, "carrot", 0, (0, 0)),
-}
+实机运行建议安装：
 
-covers = {1: {2}, 2: {3}, 3: set()}
-state = GameState(tiles=tiles, covers=covers, shelf_capacity=7)
-print(run_episode(state, GreedyAgent()))
+```bash
+pip install ultralytics opencv-python mss pyautogui
 ```
 
-## Quick Start (视觉自动点击联动)
+Windows 窗口句柄抓图还需要：
 
-```python
-from agent import ParsedFrame, ParsedTile, AutoPlayer, VisionParser, ClickController
-
-class MyParser(VisionParser):
-    def capture_and_parse(self) -> ParsedFrame:
-        # 1) 截图窗口
-        # 2) 检测 icon/type/layer/position
-        # 3) 推断 covers 图
-        return ParsedFrame(
-            tiles=[
-                ParsedTile(id=1, type="carrot", layer=1, position=(200, 300)),
-                ParsedTile(id=2, type="carrot", layer=0, position=(200, 350)),
-            ],
-            covers={1: {2}, 2: set()},
-        )
-
-class MyClicker(ClickController):
-    def click(self, position):
-        # pyautogui.click(position[0], position[1])
-        print("click", position)
-
-autoplayer = AutoPlayer(parser=MyParser(), clicker=MyClicker())
-autoplayer.step()
+```bash
+pip install pywin32
 ```
 
-## 下一步建议
+ADB 模式需要系统安装 adb。
 
-- 将 `VisionParser` 接到 OpenCV/YOLO 模型输出。
-- 使用窗口句柄抓图（Win32/ADB/scrcpy）。
-- 在 `GreedyAgent` 外挂 beam-search/MCTS 做 lookahead。
+## 3. 一键运行
+
+### 3.1 Demo（不连接设备，快速验证策略链路）
+
+```bash
+python main.py --mode demo --strategy beam --frame-json sample_frame.json --steps 5
+```
+
+### 3.2 Live：桌面屏幕抓图 + YOLO + 鼠标点击
+
+```bash
+python main.py --mode live --source screen --strategy beam --weights yolo_tiles.pt --steps 50
+```
+
+### 3.3 Live：窗口句柄抓图 + YOLO + 鼠标点击（Windows）
+
+```bash
+python main.py --mode live --source window --window-hwnd 123456 --strategy mcts --weights yolo_tiles.pt
+```
+
+### 3.4 Live：ADB 抓图 + ADB 点击（Android/scrcpy 场景）
+
+```bash
+python main.py --mode live --source adb --adb-serial emulator-5554 --strategy beam --weights yolo_tiles.pt
+```
+
+## 4. VisionParser 如何接 YOLO 输出
+
+`OpenCVYOLODetector` 已封装 ultralytics YOLO：
+
+1. `frame_source.capture()` 抓到图像（numpy array）
+2. `detector.detect(frame)` 输出 `Detection(label, bbox, confidence, layer)`
+3. `OpenCVYOLOVisionParser` 将检测结果转换为 `ParsedFrame`
+4. `AutoPlayer.step()` 自动执行：解析 -> 决策 -> 点击
+
+## 5. Lookahead 策略说明
+
+- `GreedyAgent`: 即时收益（凑三连 / 凑对子 / 解锁下层）
+- `BeamSearchAgent`: 在 greedy 评分上做多步深度搜索
+- `MCTSAgent`: 多次随机 rollout 估计动作期望价值
+
+可通过 `--strategy greedy|beam|mcts` 一键切换。
