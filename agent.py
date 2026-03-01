@@ -316,6 +316,65 @@ class OpenCVYOLODetector:
         return detections
 
 
+class OpenCVTemplateDetector:
+    """Fast tile detector based on cv2 template matching."""
+
+    def __init__(self, templates_dir: str, score_threshold: float = 0.82, max_hits_per_template: int = 64):
+        self.templates_dir = Path(templates_dir)
+        self.score_threshold = score_threshold
+        self.max_hits_per_template = max_hits_per_template
+
+    def detect(self, frame: Any) -> List[Detection]:
+        import cv2  # type: ignore
+        import numpy as np  # type: ignore
+
+        template_paths = sorted(self.templates_dir.glob("*.png"))
+        if not template_paths:
+            raise RuntimeError(f"No template files found in: {self.templates_dir}")
+
+        detections: List[Detection] = []
+        frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
+
+        for template_path in template_paths:
+            label = template_path.stem
+            template = cv2.imread(str(template_path), cv2.IMREAD_GRAYSCALE)
+            if template is None:
+                continue
+
+            th, tw = template.shape[:2]
+            if frame_gray.shape[0] < th or frame_gray.shape[1] < tw:
+                continue
+
+            result = cv2.matchTemplate(frame_gray, template, cv2.TM_CCOEFF_NORMED)
+            ys, xs = np.where(result >= self.score_threshold)
+
+            hits: List[Tuple[float, int, int]] = []
+            for y, x in zip(ys.tolist(), xs.tolist()):
+                score = float(result[y, x])
+                hits.append((score, x, y))
+
+            hits.sort(reverse=True, key=lambda item: item[0])
+            chosen: List[Tuple[float, int, int]] = []
+            for score, x, y in hits:
+                if len(chosen) >= self.max_hits_per_template:
+                    break
+                if any(abs(x - cx) < tw // 2 and abs(y - cy) < th // 2 for _, cx, cy in chosen):
+                    continue
+                chosen.append((score, x, y))
+
+            for score, x, y in chosen:
+                detections.append(
+                    Detection(
+                        label=label,
+                        bbox=(x, y, x + tw, y + th),
+                        confidence=score,
+                        layer=0,
+                    )
+                )
+
+        return detections
+
+
 @dataclass(frozen=True)
 class WindowInfo:
     hwnd: int

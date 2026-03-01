@@ -1,3 +1,5 @@
+import pytest
+
 from agent import (
     AutoPlayer,
     BeamSearchAgent,
@@ -6,6 +8,7 @@ from agent import (
     GeometricCoverInferer,
     GreedyAgent,
     MCTSAgent,
+    OpenCVTemplateDetector,
     OpenCVYOLOVisionParser,
     ParsedFrame,
     ParsedTile,
@@ -141,3 +144,34 @@ def test_select_window_by_title_returns_none_when_missing():
     windows = [WindowInfo(hwnd=101, title="记事本")]
     matched = select_window_by_title(windows, ["羊了个羊"])
     assert matched is None
+
+
+def test_template_detector_finds_tile(tmp_path):
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+
+    templates_dir = tmp_path / "templates"
+    templates_dir.mkdir()
+
+    template = np.zeros((12, 12), dtype=np.uint8)
+    template[2:10, 2:10] = 255
+    cv2.imwrite(str(templates_dir / "carrot.png"), template)
+
+    frame = np.zeros((64, 64, 3), dtype=np.uint8)
+    frame[20:32, 30:42, :] = cv2.cvtColor(template, cv2.COLOR_GRAY2BGR)
+
+    detector = OpenCVTemplateDetector(str(templates_dir), score_threshold=0.8)
+    detections = detector.detect(frame)
+
+    assert any(d.label == "carrot" for d in detections)
+
+
+def test_template_detector_raises_when_no_templates(tmp_path):
+    np = pytest.importorskip("numpy")
+    templates_dir = tmp_path / "templates"
+    templates_dir.mkdir()
+    frame = np.zeros((32, 32, 3), dtype=np.uint8)
+
+    detector = OpenCVTemplateDetector(str(templates_dir), score_threshold=0.8)
+    with pytest.raises(RuntimeError, match="No template files found"):
+        detector.detect(frame)
